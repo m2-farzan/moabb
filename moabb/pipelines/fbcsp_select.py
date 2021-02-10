@@ -1,5 +1,6 @@
 from mne.decoding import CSP
 import numpy as np
+import pandas as pd
 from scipy.signal import iirfilter, sosfilt
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.feature_selection import SelectKBest, mutual_info_classif
@@ -43,6 +44,8 @@ class FBCSP_Select(TransformerMixin, BaseEstimator):
         n_epochs, n_channels, n_signalsamples = X.shape
         n_csp = 2 * self.Nw
         n_features = 2 * self.Ns
+        classes = pd.unique(y)
+        n_classes = len(classes)
 
         # Apply filter bank
         filtered_signals = np.zeros((n_filters, n_epochs, n_channels, n_signalsamples))
@@ -65,9 +68,22 @@ class FBCSP_Select(TransformerMixin, BaseEstimator):
 
         # Feature selection
         feature_selector = SelectKBest(mutual_info_classif, k=n_features)
-        feature_selector.fit(csp_powers, y)
-        selected_features_indices = feature_selector.get_support(indices=True)
-        
+        selected_features_indices = []
+        for i in range(n_classes):
+            y_masked = np.where(y == classes[i], True, False) # one-vs-other approach, explained in III.A.6
+            feature_selector.fit(csp_powers, y_masked)
+            selected_features_indices += list( feature_selector.get_support(indices=True) )
+
+        # As feature selection is done separately for each class,
+        # a feature may appear multiple times in the list. Here we
+        # replace the repeated features in the list with other
+        # features which are selected using a global (non-class-specific)
+        # feature selector.
+        global_feature_selector = SelectKBest(mutual_info_classif, k=(n_classes * n_features))
+        global_feature_selector.fit(csp_powers, y)
+        selected_features_indices += list( global_feature_selector.get_support(indices=True) )
+        selected_features_indices = list(pd.unique(selected_features_indices))[:n_classes * n_features]
+
         # Save pipeline
         self.csp_transformers = csp_transformers
         self.selected_features_indices = selected_features_indices
